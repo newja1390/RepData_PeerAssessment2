@@ -1,0 +1,243 @@
+## Exploring the U.S. NOAA storm database to analysis of severe weather events that are most harmful to the population health and economy.
+
+### Reproducible Research: Peer Assessment 2
+#### J.A (newja1390@gmail.com)
+
+
+### 1. Synopsis
+
+The basic goal of this report is to explore the U.S. National Oceanic and Atmospheric Administration's (NOAA) Storm Database and answer these basic questions about severe weather events:
+
+1. which types of events are most harmful with respect to population health?
+2. which types of events have the greatest economic consequences?
+
+The events in the database start in the year 1950 and end in November 2011.
+The data of fatalities, injuries, property and crop damage will be used to decide which types of events are most harmful to the population health and economy.
+
+### 2. Data Processing
+
+##### 2.1. Load libraries
+Load necessary libraries to perform data analysis.
+```{r Loadlibraries, warning=FALSE, message=FALSE}
+library(utils)
+library (stringr)
+library(plyr) 
+library(ggplot2) 
+library(grid)
+library(gridExtra)
+```
+
+##### 2.2. Loading data
+Unzip the data source file and load the data set.
+```{r LoadData, warning=FALSE, message=FALSE}
+ 
+ # unzip data file and read data from dataset
+   zipfile="repdata_data_StormData.csv.bz2"
+   if(file.exists(zipfile))
+   {
+        unzip(zipfile,overwrite = TRUE)
+        dataSet <- read.csv("repdata_data_StormData.csv")
+    }
+```
+
+##### 2.3. Preprocessing the data
+```{r PreprocessingData, cache = TRUE}
+
+ # Select needed colums of dataset for this analysis:
+selectedColumns <- c("BGN_DATE", "EVTYPE", "FATALITIES", "INJURIES",
+                     "PROPDMG","PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+ 
+stormData <- dataSet[, selectedColumns]
+
+# extract the year of events and store it in a new column('year'), in storm dataset.
+stormData$year <- as.numeric(format(as.Date(stormData$BGN_DATE,
+                                            format = "%m/%d/%Y %H:%M:%S"), "%Y"))
+
+# Plotting the histogram of the events in years 1950-2011.
+hist(stormData$year, 
+     main="Histogram of the total events occured each year",  
+     sub="",
+     xlab="Year (1950-2011)",
+     ylab="Events Frequency",
+     col="red",
+     breaks = 20)
+```
+
+
+Based on code book description([Storm Events][1]), data for years prior to 1996 is incomplete and might be incorrect. So we will filter data for years prior to 1996.
+
+```{r , cache = TRUE}
+# Filter data for years prior to 1996 
+stormData <- stormData[stormData$year >= 1996, ]
+
+# Clean event types
+stormData$EVTYPE <- str_trim(str_to_upper(stormData$EVTYPE))
+stormData$EVTYPE <-str_replace(stormData$EVTYPE,'[ ]+', " ")
+stormData <- stormData[str_detect(stormData$EVTYPE, "^SUMMARY")== FALSE,]
+
+# coefficients of property and crop damages values before cleaning :
+#
+# unique(stormData$PROPDMGEXP)
+## [1] K   M B 0
+## Levels:  - ? + 0 1 2 3 4 5 6 7 8 B h H K m M
+
+# unique(stormData$CROPDMGEXP)
+## [1] K   M B
+## Levels:  ? 0 2 B k K m M
+
+# Clean the coefficients of property and crop damages values in the PROPDMGEXP and CROPDMGEXP columns.
+stormData$PROPDMGEXP <- as.character(stormData$PROPDMGEXP)
+stormData$PROPDMGEXP <- gsub("h|H", "2", stormData$PROPDMGEXP)
+stormData$PROPDMGEXP <- gsub("k|K", "3", stormData$PROPDMGEXP)
+stormData$PROPDMGEXP <- gsub("m|M", "6", stormData$PROPDMGEXP)
+stormData$PROPDMGEXP <- gsub("B", "9", stormData$PROPDMGEXP)
+stormData$PROPDMGEXP <- gsub("\\-|\\+|\\?", "0", stormData$PROPDMGEXP)
+stormData$PROPDMGEXP <- as.numeric(stormData$PROPDMGEXP)
+stormData$PROPDMGEXP[is.na(stormData$PROPDMGEXP)] = 0
+
+stormData$CROPDMGEXP <- as.character(stormData$CROPDMGEXP)
+stormData$CROPDMGEXP <- gsub("h|H", "2", stormData$CROPDMGEXP)
+stormData$CROPDMGEXP <- gsub("k|K", "3", stormData$CROPDMGEXP)
+stormData$CROPDMGEXP <- gsub("m|M", "6", stormData$CROPDMGEXP)
+stormData$CROPDMGEXP <- gsub("B", "9", stormData$CROPDMGEXP)
+stormData$CROPDMGEXP <- gsub("\\-|\\+|\\?", "0", stormData$CROPDMGEXP)
+stormData$CROPDMGEXP <- as.numeric(stormData$CROPDMGEXP)
+stormData$CROPDMGEXP[is.na(stormData$CROPDMGEXP)] = 0
+
+# coefficients of property and crop damages values after cleaning :
+#
+# unique(stormData$PROPDMGEXP)
+## [1] 3 0 6 9
+
+# unique(stormData$CROPDMGEXP)
+## [1] 3 0 6 9
+
+# transform data set and calculate properties and crops damages amount in dollars.
+stormData <- mutate(stormData, 
+                    PROPERTIES = (PROPDMG * 10^PROPDMGEXP), 
+                    CROPS = (CROPDMG * 10^CROPDMGEXP))
+
+```
+
+##### 2.4. Find events that are most harmful with respect to population health
+Calculate the number of fatalities and injuries that are caused by the severe weather events.
+Then get the first 20 most severe types of weather events.
+
+```{r PopulationHealthHarmfulEvents, cache = TRUE}
+
+# group fatalities by event type and get sum of fatalities for each type
+fatalities <- aggregate(x=list(FATALITIES=stormData$FATALITIES),
+                               by=list(EVTYPE=stormData$EVTYPE),
+                               FUN=sum, na.rm=TRUE)
+
+# group injuries by event type and get sum of injuries for each type
+injuries <- aggregate(x=list(INJURIES=stormData$INJURIES),
+                               by=list(EVTYPE=stormData$EVTYPE),
+                               FUN=sum, na.rm=TRUE)
+
+# sort by event frequency and select top 20 Injuries and Fatalities to compare.
+Top20Fatalities <- head(fatalities[with(fatalities, order(-FATALITIES)), ], 20)
+Top20Injuries   <- head(injuries[with(injuries, order(-INJURIES)), ], 20)
+
+# reset row names to ordered numbers 1:20
+row.names(Top20Fatalities) <- seq(length=nrow(Top20Fatalities))
+row.names(Top20Injuries) <- seq(length=nrow(Top20Injuries))
+
+```
+
+##### 2.5. Find events that have greatest economic consequences
+There are two different factors for economic consequences, those causing property damage and those causing crop damage.
+
+```{r EconomicConsequencesEvents, cache = TRUE}
+# group property damages by event type and get sum of property damages for each type
+properties <- aggregate(x=list(PROPERTIES=stormData$PROPERTIES),
+                               by=list(EVTYPE=stormData$EVTYPE),
+                               FUN=sum, na.rm=TRUE)
+
+# group crops damages by event type and get sum of crops damage for each type
+crops <- aggregate(x=list(CROPS=stormData$CROPS),
+                               by=list(EVTYPE=stormData$EVTYPE),
+                               FUN=sum, na.rm=TRUE)
+
+# sort by event frequency and select top 20 Property and Crop damages to compare.
+Top20Properties <- head(properties[with(properties, order(-PROPERTIES)), ], 20)
+Top20Crops <- head(crops[with(crops, order(-CROPS)), ], 20)
+
+# reset row names to ordered numbers 1:20
+row.names(Top20Properties) <- seq(length=nrow(Top20Properties))
+row.names(Top20Crops) <- seq(length=nrow(Top20Crops))
+
+```
+
+### 3. Results
+##### 3.1. Show the top 20 Injuries and  Fatalities and plot Injuries vs. Fatalities
+```{r  TopHealthDamages}
+#show top 20 Injuries and  Fatalities data
+Top20Fatalities
+Top20Injuries
+```
+
+```{r InjuriesVsFatalities, fig.width=10, warning=FALSE}
+# need to specify the levels of factor in the approprate order 
+Top20Fatalities <- within(Top20Fatalities, 
+                          EVTYPE <- factor(x = EVTYPE, levels = Top20Fatalities$EVTYPE))
+
+fatalitiesPlot <- qplot(EVTYPE, data=Top20Fatalities,weight=FATALITIES, geom="bar",binwidth=1) +               
+                        theme(axis.text.x = element_text(angle = 45,hjust = 1)) +
+                        xlab("Severe Weather Type") +
+                        ylab("Number of Fatalities") +
+                        ggtitle("Total Fatalities\n by Severe Weather Events from 1996-2011")
+
+Top20Injuries <- within(Top20Injuries, 
+                        EVTYPE <- factor(x = EVTYPE, levels = Top20Injuries$EVTYPE))
+
+injuriesPlot <- qplot(EVTYPE, data=Top20Injuries,weight=INJURIES, geom="bar", binwidth=1) +      
+                      theme(axis.text.x = element_text(angle = 45,hjust = 1)) +
+                      xlab("Severe Weather Type") + 
+                      ylab("Number of Injuries") +
+                      ggtitle("Total Injuries\n by Severe Weather Events from 1996-2011")
+
+# add an 1 by 2 rectangular grid to existing plots
+grid.arrange(fatalitiesPlot, injuriesPlot, ncol = 2)
+
+```
+
+##### 3.2. Show the top 20 Properties and Crops damages and plot Properties vs. Crops
+```{r  TopEconomicDamages}
+#show top 20 Properties and  Corps damages data
+Top20Properties
+Top20Crops
+```
+
+```{r PropertiesVsCrops, fig.width=10, warning=FALSE}
+# need to specify the levels of factor in the approprate order 
+Top20Properties <- within(Top20Properties, 
+                          EVTYPE <- factor(x = EVTYPE, levels = Top20Properties$EVTYPE))
+
+propertiesPlot <- qplot(EVTYPE, data=Top20Properties,weight=PROPERTIES, geom="bar",binwidth=1) +               
+                        theme(axis.text.x = element_text(angle = 45,hjust = 1)) +
+                        xlab("Severe Weather Type") +
+                        ylab("Properties Damages ($)") +
+                        ggtitle("Total Properties\n by Severe Weather Events from 1996-2011")
+
+Top20Crops <- within(Top20Crops, 
+                        EVTYPE <- factor(x = EVTYPE, levels = Top20Crops$EVTYPE))
+
+cropsPlot <- qplot(EVTYPE, data=Top20Crops,weight=CROPS, geom="bar", binwidth=1) +      
+                      theme(axis.text.x = element_text(angle = 45,hjust = 1)) +
+                      xlab("Severe Weather Type") + 
+                      ylab("Crops Damages ($)") +
+                      ggtitle("Total Crops\n by Severe Weather Events from 1996-2011")
+
+# add an 1 by 2 rectangular grid to existing plots
+grid.arrange(propertiesPlot, cropsPlot, ncol = 2)
+
+```
+
+### 3. Conclosion
+Excessive heat, tornado and flood are most harmful events with respect to population health, while flood, drought and hurricane/typhoon have the greatest economic impacts.
+
+--------------------------------------------------------------------------------
+[1]: http://ire.org/nicar/database-library/databases/storm-events/
+
+ 
